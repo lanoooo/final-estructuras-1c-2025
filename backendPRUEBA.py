@@ -3,21 +3,17 @@ import hashlib
 from datetime import datetime, timedelta
 
 # Configuración de conexión
-DB_HOST = "127.0.0.1"
-DB_PORT = 3306
-DB_USER = "root"
-DB_PASSWORD = "1234"
-DB_NAME = "padelclub"
+db_config = {
+    'host':     '127.0.0.1',
+    'port':     3306,
+    'user':     'root',
+    'password': '1234',
+    'database': 'padelclub'
+}
 
 class UsuarioManager:
     def __init__(self):
-        self.db = pymysql.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            database=DB_NAME
-        )
+        self.db = pymysql.connect(**db_config)
         self.cursor = self.db.cursor()
 
     def hash_password(self, plain_text):
@@ -40,8 +36,7 @@ class UsuarioManager:
         self.cursor.execute(consulta, (nombre_usuario, clave_segura))
         resultado = self.cursor.fetchone()
         if resultado:
-            rol, uid = resultado
-            return rol, uid
+            return resultado  # (rol, usuario_id)
         return None, None
 
     def desconectar(self):
@@ -49,27 +44,42 @@ class UsuarioManager:
 
 class ReservationManager:
     """Gestiona disponibilidad y reservas de canchas."""
-    MAX_DAYS = 4
+    MAX_DAYS    = 4
     DATE_FORMAT = "%Y-%m-%d"
 
     def __init__(self):
         self.gestor = UsuarioManager()
 
+    def get_available_slots(self, fecha_str):
+        """Devuelve las franjas horarias con al menos una cancha libre."""
+        hoy   = datetime.today().date()
+        fecha = datetime.strptime(fecha_str, self.DATE_FORMAT).date()
+        offset = (fecha - hoy).days
+        if offset < 1 or offset > self.MAX_DAYS:
+            return []
+        tabla = f"canchas_dia_{offset}"
+        cur = self.gestor.cursor
+        query = (
+            f"SELECT DISTINCT DATE_FORMAT(fecha_hora, '%H:%i:%s') AS hora "
+            f"FROM {tabla} WHERE disponible = 1 "
+            f"ORDER BY hora"
+        )
+        cur.execute(query)
+        return [r[0] for r in cur.fetchall()]
+
     def reservar(self, usuario_id: int, fecha_str: str, hora_str: str):
         """Reserva la primera cancha libre (1–4) en la franja indicada."""
-        # Calcular offset para seleccionar la tabla correcta
-        hoy = datetime.today().date()
+        hoy   = datetime.today().date()
         fecha = datetime.strptime(fecha_str, self.DATE_FORMAT).date()
         offset = (fecha - hoy).days
         if offset < 1 or offset > self.MAX_DAYS:
             return False, "Fecha fuera de rango"
         tabla = f"canchas_dia_{offset}"
-
         fecha_hora = f"{fecha_str} {hora_str}"
         cur = self.gestor.cursor
 
         try:
-            # 1) Seleccionar la primera cancha libre en esa franja
+            # 1) Seleccionar la primera cancha libre
             cur.execute(
                 f"SELECT cancha_numero FROM {tabla} "
                 f"WHERE fecha_hora = %s AND disponible = 1 "
@@ -79,17 +89,16 @@ class ReservationManager:
             fila = cur.fetchone()
             if not fila:
                 return False, "No hay canchas disponibles en ese horario"
-
             cancha = fila[0]
 
-            # 2) Marcar solo esa cancha como ocupada
+            # 2) Marcarla como ocupada
             cur.execute(
                 f"UPDATE {tabla} SET disponible = 0 "
                 f"WHERE fecha_hora = %s AND cancha_numero = %s",
                 (fecha_hora, cancha)
             )
 
-            # 3) Insertar la reserva en la tabla 'reservas'
+            # 3) Insertar la reserva
             fin_dt = datetime.strptime(fecha_hora, "%Y-%m-%d %H:%M:%S") + timedelta(hours=1)
             cur.execute(
                 "INSERT INTO reservas (usuario_id, cancha, fecha_inicio, fecha_fin) VALUES (%s, %s, %s, %s)",
@@ -105,3 +114,21 @@ class ReservationManager:
 
         finally:
             self.gestor.desconectar()
+
+    def get_reservations(self):
+        """Devuelve todas las reservas con día, hora, cancha y usuario."""
+        um = self.gestor
+        cur = um.cursor
+        sql = (
+            "SELECT "
+              "DATE_FORMAT(r.fecha_inicio, '%Y-%m-%d') AS dia, "
+              "DATE_FORMAT(r.fecha_inicio, '%H:%i:%s') AS hora, "
+              "r.cancha, u.usuario "
+            "FROM reservas r "
+            "JOIN usuarios u ON r.usuario_id = u.id "
+            "ORDER BY r.fecha_inicio"
+        )
+        cur.execute(sql)
+        rows = cur.fetchall()
+        um.desconectar()
+        return rows
