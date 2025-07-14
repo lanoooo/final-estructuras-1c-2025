@@ -8,7 +8,7 @@ import os
 
 def check_dependencies():
     """Verificar que todas las dependencias estén disponibles"""
-    try:
+    try:  
         import tkinter
         print("✓ tkinter disponible")
     except ImportError:

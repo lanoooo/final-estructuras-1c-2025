@@ -25,6 +25,17 @@ class UsuarioManager:
         return hashlib.sha256(plain_text.encode('utf-8')).hexdigest()
 
     def crear_usuario(self, nombre_usuario, clave, rol):
+        # Validaciones básicas
+        if not nombre_usuario or not nombre_usuario.strip():
+            return False
+        
+        if not clave or len(clave) < 6:
+            return False
+        
+        if rol not in ['player', 'admin']:
+            return False
+        
+        nombre_usuario = nombre_usuario.strip()
         clave_segura = self.hash_password(clave)
         sql = "INSERT INTO usuarios (usuario, contraseña, tipo) VALUES (%s, %s, %s)"
         try:
@@ -257,6 +268,39 @@ class TournamentManager:
     def create_tournament(self, name, date, max_teams=8):
         """Crear un nuevo torneo."""
         try:
+            # Validaciones básicas
+            if not name or not name.strip():
+                return False, "El nombre del torneo no puede estar vacío"
+            
+            name = name.strip()
+            
+            if len(name) < 2:
+                return False, "El nombre del torneo debe tener al menos 2 caracteres"
+            
+            if len(name) > 50:
+                return False, "El nombre del torneo no puede tener más de 50 caracteres"
+            
+            # Validar número de equipos
+            try:
+                max_teams = int(max_teams)
+                if max_teams < 4:
+                    return False, "El torneo debe tener al menos 4 equipos"
+                if max_teams > 16:
+                    return False, "El torneo no puede tener más de 16 equipos"
+                if max_teams % 2 != 0:
+                    return False, "El número de equipos debe ser par para poder hacer emparejamientos"
+            except (ValueError, TypeError):
+                return False, "El número de equipos debe ser un número válido"
+            
+            # Verificar que no exista otro torneo en la misma fecha
+            sql = "SELECT id, nombre FROM torneos WHERE fecha = %s"
+            self.cursor.execute(sql, (date,))
+            existing_tournament = self.cursor.fetchone()
+            
+            if existing_tournament:
+                tournament_id, tournament_name = existing_tournament
+                return False, f"Ya existe un torneo ('{tournament_name}') programado para el {date}"
+            
             sql = "INSERT INTO torneos (nombre, fecha, max_equipos, estado) VALUES (%s, %s, %s, 'abierto')"
             self.cursor.execute(sql, (name, date, max_teams))
             tournament_id = self.cursor.lastrowid
@@ -275,6 +319,35 @@ class TournamentManager:
     def register_team(self, tournament_id, team_name, player1, player2, user_id):
         """Registrar un equipo en el torneo."""
         try:
+            # Validaciones básicas
+            if not team_name or not team_name.strip():
+                return False, "El nombre del equipo no puede estar vacío"
+            
+            if not player1 or not player1.strip():
+                return False, "El nombre del jugador 1 no puede estar vacío"
+            
+            if not player2 or not player2.strip():
+                return False, "El nombre del jugador 2 no puede estar vacío"
+            
+            # Limpiar espacios
+            team_name = team_name.strip()
+            player1 = player1.strip()
+            player2 = player2.strip()
+            
+            # Verificar longitud mínima
+            if len(team_name) < 2:
+                return False, "El nombre del equipo debe tener al menos 2 caracteres"
+            
+            if len(player1) < 2:
+                return False, "El nombre del jugador 1 debe tener al menos 2 caracteres"
+            
+            if len(player2) < 2:
+                return False, "El nombre del jugador 2 debe tener al menos 2 caracteres"
+            
+            # Verificar que los jugadores no sean el mismo
+            if player1.lower() == player2.lower():
+                return False, "Los dos jugadores no pueden tener el mismo nombre"
+            
             # Verificar que el torneo existe y está abierto
             sql = "SELECT max_equipos FROM torneos WHERE id = %s AND estado = 'abierto'"
             self.cursor.execute(sql, (tournament_id,))
@@ -390,6 +463,43 @@ class TournamentManager:
         except Exception as e:
             self.db.rollback()
             return False, str(e)
+    
+    def delete_team(self, team_id, tournament_id):
+        """Eliminar un equipo específico del torneo."""
+        try:
+            # Verificar que el equipo existe y pertenece al torneo
+            sql = "SELECT e.id, e.nombre_equipo, e.jugador1, e.jugador2, u.usuario FROM equipos e JOIN usuarios u ON e.usuario_id = u.id WHERE e.id = %s AND e.torneo_id = %s"
+            self.cursor.execute(sql, (team_id, tournament_id))
+            team = self.cursor.fetchone()
+            
+            if not team:
+                return False, "Equipo no encontrado"
+            
+            team_id, team_name, player1, player2, username = team
+            
+            # Verificar que el torneo esté abierto (no se pueden eliminar equipos de torneos en curso)
+            sql = "SELECT estado FROM torneos WHERE id = %s"
+            self.cursor.execute(sql, (tournament_id,))
+            result = self.cursor.fetchone()
+            
+            if not result or result[0] != 'abierto':
+                return False, "No se pueden eliminar equipos de torneos en curso o finalizados"
+            
+            # Eliminar el equipo
+            self.cursor.execute("DELETE FROM equipos WHERE id = %s", (team_id,))
+            self.db.commit()
+            
+            return True, f"Equipo '{team_name}' eliminado correctamente"
+            
+        except Exception as e:
+            self.db.rollback()
+            return False, str(e)
+    
+    def get_open_tournaments(self):
+        """Devuelve todos los torneos abiertos para inscripción."""
+        sql = "SELECT id, nombre, fecha, max_equipos FROM torneos WHERE estado = 'abierto' ORDER BY fecha"
+        self.cursor.execute(sql)
+        return self.cursor.fetchall()
     
     def desconectar(self):
         if self.db:

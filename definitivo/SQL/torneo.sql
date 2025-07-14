@@ -1,6 +1,8 @@
 -- Script para crear las tablas de torneos
 USE padelclub;
 -- Tabla de torneos
+SET FOREIGN_KEY_CHECKS = 0;
+DROP TABLE IF EXISTS torneos;
 CREATE TABLE IF NOT EXISTS torneos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     nombre VARCHAR(100) NOT NULL,
@@ -11,6 +13,7 @@ CREATE TABLE IF NOT EXISTS torneos (
 );
 
 -- Tabla de equipos
+DROP TABLE IF EXISTS equipos;
 CREATE TABLE IF NOT EXISTS equipos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     torneo_id INT NOT NULL,
@@ -25,6 +28,7 @@ CREATE TABLE IF NOT EXISTS equipos (
 );
 
 -- Tabla de partidos
+DROP TABLE IF EXISTS partidos;
 CREATE TABLE IF NOT EXISTS partidos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     torneo_id INT NOT NULL,
@@ -46,3 +50,4 @@ CREATE INDEX idx_torneos_fecha ON torneos(fecha);
 CREATE INDEX idx_torneos_estado ON torneos(estado);
 CREATE INDEX idx_equipos_torneo ON equipos(torneo_id);
 CREATE INDEX idx_partidos_torneo ON partidos(torneo_id);
+SET FOREIGN_KEY_CHECKS = 1;

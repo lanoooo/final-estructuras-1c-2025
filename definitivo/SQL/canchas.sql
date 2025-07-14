@@ -4,7 +4,7 @@
 
 -- 1) Activar el scheduler de eventos
 SET GLOBAL event_scheduler = ON;
-
+SET FOREIGN_KEY_CHECKS = 0;
 USE padelclub;
 
 -- 2) Eliminar evento y tablas previas
@@ -74,29 +74,69 @@ CREATE EVENT actualizar_canchas
   STARTS CONCAT(DATE_ADD(CURDATE(), INTERVAL 1 DAY), ' 00:00:00')
 DO
 BEGIN
-    DECLARE d INT;
-    DECLARE tbl_name VARCHAR(20);
-    FOR d IN 1..4 DO
-      SET tbl_name = CONCAT('canchas_dia_', d);
-      TRUNCATE TABLE 
-        @tbl_name;
-      INSERT INTO 
-        @tbl_name (cancha_numero, fecha_hora, disponible)
-      SELECT c.c,
-             CONCAT(DATE_ADD(CURDATE(), INTERVAL d DAY), ' ', h.h),
-             NOT EXISTS(
-               SELECT 1 FROM reservas r
-                WHERE r.cancha = c.c
-                  AND r.fecha_inicio = CONCAT(DATE_ADD(CURDATE(), INTERVAL d DAY), ' ', h.h)
-             )
-      FROM (SELECT 1 AS c UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4) AS c,
-           (SELECT '16:00:00' AS h UNION ALL SELECT '17:00:00'
-            UNION ALL SELECT '18:00:00' UNION ALL SELECT '19:00:00'
-            UNION ALL SELECT '20:00:00') AS h;
-    END FOR;
+    -- Día 1
+    TRUNCATE TABLE canchas_dia_1;
+    INSERT INTO canchas_dia_1 (cancha_numero, fecha_hora, disponible)
+    SELECT c.c,
+           CONCAT(DATE_ADD(CURDATE(), INTERVAL 1 DAY), ' ', h.h),
+           NOT EXISTS(
+             SELECT 1 FROM reservas r
+              WHERE r.cancha = c.c
+                AND r.fecha_inicio = CONCAT(DATE_ADD(CURDATE(), INTERVAL 1 DAY), ' ', h.h)
+           )
+    FROM (SELECT 1 AS c UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4) AS c,
+         (SELECT '16:00:00' AS h UNION ALL SELECT '17:00:00'
+          UNION ALL SELECT '18:00:00' UNION ALL SELECT '19:00:00'
+          UNION ALL SELECT '20:00:00') AS h;
+
+    -- Día 2
+    TRUNCATE TABLE canchas_dia_2;
+    INSERT INTO canchas_dia_2 (cancha_numero, fecha_hora, disponible)
+    SELECT c.c,
+           CONCAT(DATE_ADD(CURDATE(), INTERVAL 2 DAY), ' ', h.h),
+           NOT EXISTS(
+             SELECT 1 FROM reservas r
+              WHERE r.cancha = c.c
+                AND r.fecha_inicio = CONCAT(DATE_ADD(CURDATE(), INTERVAL 2 DAY), ' ', h.h)
+           )
+    FROM (SELECT 1 AS c UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4) AS c,
+         (SELECT '16:00:00' AS h UNION ALL SELECT '17:00:00'
+          UNION ALL SELECT '18:00:00' UNION ALL SELECT '19:00:00'
+          UNION ALL SELECT '20:00:00') AS h;
+
+    -- Día 3
+    TRUNCATE TABLE canchas_dia_3;
+    INSERT INTO canchas_dia_3 (cancha_numero, fecha_hora, disponible)
+    SELECT c.c,
+           CONCAT(DATE_ADD(CURDATE(), INTERVAL 3 DAY), ' ', h.h),
+           NOT EXISTS(
+             SELECT 1 FROM reservas r
+              WHERE r.cancha = c.c
+                AND r.fecha_inicio = CONCAT(DATE_ADD(CURDATE(), INTERVAL 3 DAY), ' ', h.h)
+           )
+    FROM (SELECT 1 AS c UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4) AS c,
+         (SELECT '16:00:00' AS h UNION ALL SELECT '17:00:00'
+          UNION ALL SELECT '18:00:00' UNION ALL SELECT '19:00:00'
+          UNION ALL SELECT '20:00:00') AS h;
+
+    -- Día 4
+    TRUNCATE TABLE canchas_dia_4;
+    INSERT INTO canchas_dia_4 (cancha_numero, fecha_hora, disponible)
+    SELECT c.c,
+           CONCAT(DATE_ADD(CURDATE(), INTERVAL 4 DAY), ' ', h.h),
+           NOT EXISTS(
+             SELECT 1 FROM reservas r
+              WHERE r.cancha = c.c
+                AND r.fecha_inicio = CONCAT(DATE_ADD(CURDATE(), INTERVAL 4 DAY), ' ', h.h)
+           )
+    FROM (SELECT 1 AS c UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4) AS c,
+         (SELECT '16:00:00' AS h UNION ALL SELECT '17:00:00'
+          UNION ALL SELECT '18:00:00' UNION ALL SELECT '19:00:00'
+          UNION ALL SELECT '20:00:00') AS h;
+
     -- Eliminar reservas vencidas
     DELETE FROM reservas WHERE fecha_fin < NOW();
 END$$
 DELIMITER ;
-
+SET FOREIGN_KEY_CHECKS = 1;
 -- FIN de canchas.sql

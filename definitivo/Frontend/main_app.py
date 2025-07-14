@@ -198,7 +198,8 @@ class App(tk.Tk):
         self.pages = {}
         page_classes = [LoginPage, RegisterPage, PlayerMenuPage, AdminMenuPage, 
                        ReservationPage, ViewReservationsPage, TournamentPage, 
-                       TournamentRegistrationPage, TournamentManagementPage, AdminUsersPage]
+                       TournamentRegistrationPage, TournamentManagementPage, 
+                       TournamentViewPage, AdminUsersPage]
         
         for PageClass in page_classes:
             page = PageClass(self.container, self)
@@ -211,9 +212,11 @@ class App(tk.Tk):
         elif name == 'ViewReservationsPage':
             self.pages[name].refresh_reservations()
         elif name == 'TournamentRegistrationPage':
-            self.pages[name].refresh_tournament_info()
+            self.pages[name]._load_tournaments_dropdown()
         elif name == 'TournamentManagementPage':
             self.pages[name].refresh_tournament_data()
+        elif name == 'TournamentViewPage':
+            self.pages[name].refresh_tournaments()
         self.pages[name].tkraise()
 
     def center_window(self):
@@ -428,18 +431,41 @@ class RegisterPage(tk.Frame):
         password = self.vars['pass_var'].get().strip()
         role = self.vars['role_var'].get().strip()
         admin_key = self.vars['key_var'].get().strip()
-        
+
+        # Mapear rol a valor backend
+        if role == 'jugador':
+            role = 'player'
+
+        # Validar campos básicos
         if not username or not password or not role:
             messagebox.showerror("Error", "Complete los campos obligatorios")
             return
-        
+        # Validar nombre de usuario
+        if len(username) < 3:
+            messagebox.showerror("Error", "El nombre de usuario debe tener al menos 3 caracteres")
+            return
+        if len(username) > 20:
+            messagebox.showerror("Error", "El nombre de usuario no puede tener más de 20 caracteres")
+            return
+        # Validar contraseña
+        if len(password) < 6:
+            messagebox.showerror("Error", "La contraseña debe tener al menos 6 caracteres")
+            return
+        # Validar rol
+        if role not in ['player', 'admin']:
+            messagebox.showerror("Error", "Rol inválido")
+            return
+        # Validar clave de administrador
         if role == 'admin' and admin_key != ADMIN_SECRET:
             messagebox.showerror("Error", "Clave de administrador inválida")
             return
-        
-        if AuthService.register(username, password, role):
+        try:
+            ok = AuthService.register(username, password, role)
+        except Exception as e:
+            messagebox.showerror("Error", f"Error inesperado: {str(e)}")
+            return
+        if ok:
             messagebox.showinfo("Éxito", "Usuario registrado correctamente")
-            
             # Iniciar sesión automáticamente después del registro
             ok, user_role, uid = AuthService.login(username, password)
             if ok:
@@ -452,26 +478,19 @@ class RegisterPage(tk.Frame):
                             var.set('')
                         self.controller.show_page('LoginPage')
                         return
-                
-                # Configurar sesión
                 self.controller.current_role = user_role
                 self.controller.current_user_id = uid
                 self.controller.current_username = username
-                
-                # Limpiar formulario
                 for var in self.vars.values():
                     var.set('')
-                
-                # Ir al menú correspondiente
                 next_page = 'AdminMenuPage' if user_role == 'admin' else 'PlayerMenuPage'
                 self.controller.show_page(next_page)
             else:
-                # Si falla el login automático, ir a login manual
                 for var in self.vars.values():
                     var.set('')
                 self.controller.show_page('LoginPage')
         else:
-            messagebox.showerror("Error", "Error al registrar usuario")
+            messagebox.showerror("Error", "El nombre de usuario ya está en uso. Por favor elige otro.")
 
 class PlayerMenuPage(tk.Frame):
     def __init__(self, parent, controller):
@@ -492,6 +511,7 @@ class PlayerMenuPage(tk.Frame):
         buttons = [
             ("Reservar Cancha", lambda: self.controller.show_page('ReservationPage')),
             ("Ver Mis Reservas", lambda: self.controller.show_page('ViewReservationsPage')),
+            ("Ver Torneos", lambda: self.controller.show_page('TournamentViewPage')),
             ("Inscribirse a Torneo", lambda: self.controller.show_page('TournamentRegistrationPage')),
             ("Cerrar Sesión", self._logout)
         ]
@@ -889,8 +909,34 @@ class TournamentPage(tk.Frame):
         date_selection = self.date_var.get()
         max_teams = self.max_teams_var.get()
         
+        # Validar campos básicos
         if not name or not date_selection or not max_teams:
             messagebox.showerror("Error", "Complete todos los campos")
+            return
+        
+        # Validar nombre del torneo
+        if len(name) < 2:
+            messagebox.showerror("Error", "El nombre del torneo debe tener al menos 2 caracteres")
+            return
+        
+        if len(name) > 50:
+            messagebox.showerror("Error", "El nombre del torneo no puede tener más de 50 caracteres")
+            return
+        
+        # Validar número de equipos
+        try:
+            max_teams_int = int(max_teams)
+            if max_teams_int < 4:
+                messagebox.showerror("Error", "El torneo debe tener al menos 4 equipos")
+                return
+            if max_teams_int > 16:
+                messagebox.showerror("Error", "El torneo no puede tener más de 16 equipos")
+                return
+            if max_teams_int % 2 != 0:
+                messagebox.showerror("Error", "El número de equipos debe ser par para poder hacer emparejamientos")
+                return
+        except ValueError:
+            messagebox.showerror("Error", "El número de equipos debe ser un número válido")
             return
         
         # Extraer la fecha del formato "dd/mm/yyyy (Day)"
@@ -945,7 +991,14 @@ class TournamentRegistrationPage(tk.Frame):
         self.info_frame.pack(pady=(0, 20), padx=40, fill='x')
         
         self.info_content = ttk.Frame(self.info_frame, style='Card.TFrame')
-        self.info_content.pack(padx=20, pady=20, fill='x')
+        self.info_content.pack(padx=20, fill='x')
+        
+        # Dropdown de torneos
+        ttk.Label(self.info_content, text="Seleccionar Torneo:", style='Card.TLabel').pack(anchor='w', pady=(0, 5))
+        self.tournament_var = tk.StringVar()
+        self.tournament_dropdown = ttk.Combobox(self.info_content, textvariable=self.tournament_var, state='readonly', style='Modern.TCombobox')
+        self.tournament_dropdown.pack(fill='x', pady=(0, 10), ipady=8)
+        self.tournament_dropdown.bind('<<ComboboxSelected>>', lambda e: self.refresh_tournament_info())
         
         self.tournament_info_label = ttk.Label(self.info_content, text="Cargando información del torneo...", 
                                               style='Card.TLabel', font=('Segoe UI', 12))
@@ -997,66 +1050,105 @@ class TournamentRegistrationPage(tk.Frame):
         back_btn = ttk.Button(btn_frame, text="Volver al Menú", style='Secondary.TButton',
                              command=lambda: self.controller.show_page('PlayerMenuPage'))
         back_btn.pack(fill='x', ipady=8)
+        
+        self._load_tournaments_dropdown()
+
+    def _load_tournaments_dropdown(self):
+        try:
+            tm = TournamentManager()
+            tournaments = tm.get_open_tournaments()
+            tm.desconectar()
+            self.tournaments_list = tournaments
+            if tournaments:
+                display_list = [f"{nombre} - {datetime.strptime(str(fecha), '%Y-%m-%d').strftime('%d/%m/%Y')} (ID: {tid})" for tid, nombre, fecha, max_equipos in tournaments]
+                self.tournament_dropdown['values'] = display_list
+                self.tournament_var.set(display_list[0])
+            else:
+                self.tournament_dropdown['values'] = []
+                self.tournament_var.set('')
+            self.refresh_tournament_info()
+        except Exception as e:
+            self.tournament_dropdown['values'] = []
+            self.tournament_var.set('')
+            self.tournament_info_label.config(text=f"Error al cargar torneos: {str(e)}")
+            self.register_btn.config(state='disabled')
 
     def refresh_tournament_info(self):
         try:
-            tm = TournamentManager()
-            tournament = tm.get_active_tournament()
-            
-            if tournament:
-                self.tournament_id, name, date, max_teams = tournament
-                teams = tm.get_tournament_teams(self.tournament_id)
-                current_teams = len(teams)
-                
-                # Manejar fecha como str o datetime.date
-                if isinstance(date, str):
-                    date_obj = datetime.strptime(date, "%Y-%m-%d")
-                else:
-                    date_obj = date  # Ya es datetime.date
-                formatted_date = date_obj.strftime("%d/%m/%Y")
-                
-                info_text = (f"🏆 {name}\n"
-                           f"📅 Fecha: {formatted_date}\n"
-                           f"👥 Equipos: {current_teams}/{max_teams}")
-                
-                self.tournament_info_label.config(text=info_text)
-                
-                if current_teams >= max_teams:
-                    self.msg_label.config(text="⚠️ Torneo completo")
-                    self.register_btn.config(state='disabled')
-                else:
-                    self.msg_label.config(text=f"✅ Quedan {max_teams - current_teams} cupos disponibles")
-                    self.register_btn.config(state='normal')
-            else:
+            # Buscar el torneo seleccionado
+            selected = self.tournament_var.get()
+            if not selected or not hasattr(self, 'tournaments_list') or not self.tournaments_list:
                 self.tournament_info_label.config(text="❌ No hay torneos abiertos para inscripción")
                 self.register_btn.config(state='disabled')
                 self.tournament_id = None
-            
+                return
+            # Extraer el ID del torneo seleccionado
+            for tid, nombre, fecha, max_equipos in self.tournaments_list:
+                display = f"{nombre} - {datetime.strptime(str(fecha), '%Y-%m-%d').strftime('%d/%m/%Y')} (ID: {tid})"
+                if display == selected:
+                    self.tournament_id = tid
+                    break
+            else:
+                self.tournament_id = None
+                self.tournament_info_label.config(text="❌ Torneo no encontrado")
+                self.register_btn.config(state='disabled')
+                return
+            tm = TournamentManager()
+            teams = tm.get_tournament_teams(self.tournament_id)
+            current_teams = len(teams)
+            max_teams = [x[3] for x in self.tournaments_list if x[0] == self.tournament_id][0]
+            # Manejar fecha como str
+            fecha = [x[2] for x in self.tournaments_list if x[0] == self.tournament_id][0]
+            formatted_date = datetime.strptime(str(fecha), "%Y-%m-%d").strftime("%d/%m/%Y")
+            info_text = (f"🏆 {selected.split(' (ID:')[0]}\n"
+                       f"📅 Fecha: {formatted_date}\n"
+                       f"👥 Equipos: {current_teams}/{max_teams}")
+            self.tournament_info_label.config(text=info_text)
+            if current_teams >= max_teams:
+                self.msg_label.config(text="⚠️ Torneo completo")
+                self.register_btn.config(state='disabled')
+            else:
+                self.msg_label.config(text=f"✅ Quedan {max_teams - current_teams} cupos disponibles")
+                self.register_btn.config(state='normal')
             tm.desconectar()
-            
         except Exception as e:
             self.tournament_info_label.config(text=f"Error al cargar torneo: {str(e)}")
             self.register_btn.config(state='disabled')
 
     def _register_team(self):
-        if not self.tournament_id:
+        if not hasattr(self, 'tournament_id') or not self.tournament_id:
             messagebox.showerror("Error", "No hay torneo disponible")
             return
-        
         team_name = self.team_name_var.get().strip()
         player1 = self.player1_var.get().strip()
         player2 = self.player2_var.get().strip()
-        
+        # Validar que no estén vacíos
         if not team_name or not player1 or not player2:
             messagebox.showerror("Error", "Complete todos los campos")
             return
-        
+        # Validar que no sean solo espacios
+        if team_name == "" or player1 == "" or player2 == "":
+            messagebox.showerror("Error", "Los nombres no pueden estar vacíos")
+            return
+        # Validar longitud mínima
+        if len(team_name) < 2:
+            messagebox.showerror("Error", "El nombre del equipo debe tener al menos 2 caracteres")
+            return
+        if len(player1) < 2:
+            messagebox.showerror("Error", "El nombre del jugador 1 debe tener al menos 2 caracteres")
+            return
+        if len(player2) < 2:
+            messagebox.showerror("Error", "El nombre del jugador 2 debe tener al menos 2 caracteres")
+            return
+        # Validar que los jugadores no sean el mismo
+        if player1.lower() == player2.lower():
+            messagebox.showerror("Error", "Los dos jugadores no pueden tener el mismo nombre")
+            return
         try:
             tm = TournamentManager()
             ok, msg = tm.register_team(self.tournament_id, team_name, player1, player2, 
                                      self.controller.current_user_id)
             tm.desconectar()
-            
             if ok:
                 messagebox.showinfo("Éxito", msg)
                 self.team_name_var.set('')
@@ -1065,7 +1157,6 @@ class TournamentRegistrationPage(tk.Frame):
                 self.refresh_tournament_info()
             else:
                 messagebox.showerror("Error", msg)
-                
         except Exception as e:
             messagebox.showerror("Error", f"Error al inscribir equipo: {str(e)}")
 
@@ -1093,6 +1184,15 @@ class TournamentManagementPage(tk.Frame):
         
         ttk.Label(title_frame, text="🏆 GESTIÓN DE TORNEOS", 
                  style='Title.TLabel').pack()
+        
+        # Dropdown de selección de torneo
+        select_frame = ttk.Frame(self, style='Modern.TFrame')
+        select_frame.pack(pady=(0, 10))
+        ttk.Label(select_frame, text="Seleccionar torneo:", style='Card.TLabel').pack(side='left', padx=(0, 8))
+        self.tournament_var = tk.StringVar()
+        self.tournament_dropdown = ttk.Combobox(select_frame, textvariable=self.tournament_var, state='readonly', style='Modern.TCombobox')
+        self.tournament_dropdown.pack(side='left', padx=(0, 10), ipady=6)
+        self.tournament_dropdown.bind('<<ComboboxSelected>>', lambda e: self._on_tournament_change())
         
         # Información del torneo activo
         info_frame = ttk.Frame(self, style='Card.TFrame')
@@ -1139,53 +1239,99 @@ class TournamentManagementPage(tk.Frame):
                                      style='Modern.TButton', command=self._view_matches)
         view_matches_btn.pack(side='left', padx=(0, 10), ipady=8, ipadx=20)
         
+        delete_team_btn = ttk.Button(btn_frame, text="Eliminar Equipo", 
+                                    style='Danger.TButton', command=self._delete_team)
+        delete_team_btn.pack(side='left', padx=(0, 10), ipady=8, ipadx=20)
+        
+        delete_tournament_btn = ttk.Button(btn_frame, text="Eliminar Torneo", 
+                                          style='Danger.TButton', command=self._delete_tournament)
+        delete_tournament_btn.pack(side='left', padx=(0, 10), ipady=8, ipadx=20)
+        
         back_btn = ttk.Button(btn_frame, text="Volver", style='Secondary.TButton',
                              command=lambda: self.controller.show_page('TournamentPage'))
         back_btn.pack(side='left', ipady=8, ipadx=20)
 
+    def _on_tournament_change(self):
+        # Cambia el torneo gestionado y actualiza la vista
+        selected = self.tournament_dropdown.get()
+        if not hasattr(self, 'tournament_ids') or not self.tournament_ids:
+            return
+        tournament_id = self.tournament_ids.get(selected)
+        if tournament_id:
+            self.tournament_id = tournament_id
+            self._update_tournament_view()
+
+    def _update_tournament_view(self):
+        try:
+            tm = TournamentManager()
+            # Obtener datos del torneo seleccionado
+            sql = "SELECT nombre, fecha, max_equipos FROM torneos WHERE id = %s"
+            tm.cursor.execute(sql, (self.tournament_id,))
+            result = tm.cursor.fetchone()
+            if not result:
+                self.tournament_info_label.config(text="❌ Torneo no encontrado")
+                return
+            name, date, max_teams = result
+            teams = tm.get_tournament_teams(self.tournament_id)
+            # Manejar fecha como str o datetime.date
+            if isinstance(date, str):
+                date_obj = datetime.strptime(date, "%Y-%m-%d")
+            else:
+                date_obj = date
+            formatted_date = date_obj.strftime("%d/%m/%Y")
+            info_text = (f"🏆 {name}\n"
+                       f"📅 Fecha: {formatted_date}\n"
+                       f"👥 Equipos inscritos: {len(teams)}/{max_teams}")
+            self.tournament_info_label.config(text=info_text)
+            # Limpiar y llenar tabla de equipos
+            for item in self.teams_tree.get_children():
+                self.teams_tree.delete(item)
+            for team in teams:
+                team_id, team_name, player1, player2, username = team
+                self.teams_tree.insert('', 'end', values=(team_id, team_name, player1, player2, username))
+            # Habilitar botón de fixture si hay al menos 2 equipos
+            if len(teams) >= 2:
+                self.generate_btn.config(state='normal')
+            else:
+                self.generate_btn.config(state='disabled')
+            tm.desconectar()
+        except Exception as e:
+            self.tournament_info_label.config(text=f"Error: {str(e)}")
+
     def refresh_tournament_data(self):
         try:
             tm = TournamentManager()
-            tournament = tm.get_active_tournament()
-            
-            if tournament:
-                self.tournament_id, name, date, max_teams = tournament
-                teams = tm.get_tournament_teams(self.tournament_id)
-                
-                # Manejar fecha como str o datetime.date
+            tournaments = tm.get_all_tournaments()
+            dropdown_options = []
+            self.tournament_ids = {}
+            for tournament in tournaments:
+                tournament_id, name, date, status, max_teams = tournament
                 if isinstance(date, str):
                     date_obj = datetime.strptime(date, "%Y-%m-%d")
                 else:
-                    date_obj = date  # Ya es datetime.date
+                    date_obj = date
                 formatted_date = date_obj.strftime("%d/%m/%Y")
-                
-                info_text = (f"🏆 {name}\n"
-                           f"📅 Fecha: {formatted_date}\n"
-                           f"👥 Equipos inscritos: {len(teams)}/{max_teams}")
-                
-                self.tournament_info_label.config(text=info_text)
-                
-                # Limpiar y llenar tabla de equipos
+                status_text = {
+                    'abierto': 'Abierto',
+                    'en_curso': 'En Curso',
+                    'finalizado': 'Finalizado'
+                }.get(status, status)
+                dropdown_text = f"{name} - {formatted_date} ({status_text})"
+                dropdown_options.append(dropdown_text)
+                self.tournament_ids[dropdown_text] = tournament_id
+            self.tournament_dropdown['values'] = dropdown_options
+            if dropdown_options:
+                self.tournament_dropdown.set(dropdown_options[0])
+                self.tournament_id = self.tournament_ids[dropdown_options[0]]
+                self._update_tournament_view()
+            else:
+                self.tournament_dropdown.set('')
+                self.tournament_id = None
+                self.tournament_info_label.config(text="❌ No hay torneos activos")
                 for item in self.teams_tree.get_children():
                     self.teams_tree.delete(item)
-                
-                for team in teams:
-                    team_id, team_name, player1, player2, username = team
-                    self.teams_tree.insert('', 'end', values=(team_id, team_name, player1, player2, username))
-                
-                # Habilitar botón de fixture si hay al menos 2 equipos
-                if len(teams) >= 2:
-                    self.generate_btn.config(state='normal')
-                else:
-                    self.generate_btn.config(state='disabled')
-                    
-            else:
-                self.tournament_info_label.config(text="❌ No hay torneos activos")
                 self.generate_btn.config(state='disabled')
-                self.tournament_id = None
-            
             tm.desconectar()
-            
         except Exception as e:
             self.tournament_info_label.config(text=f"Error: {str(e)}")
 
@@ -1194,8 +1340,7 @@ class TournamentManagementPage(tk.Frame):
             messagebox.showerror("Error", "No hay torneo activo")
             return
         
-        if messagebox.askyesno("Confirmar", "¿Generar fixture del torneo?\n"
-                                          "Esto cerrará las inscripciones."):
+        if messagebox.askyesno("Confirmar", "¿Generar fixture del torneo?\nEsto cerrará las inscripciones."):
             try:
                 tm = TournamentManager()
                 ok, msg = tm.generate_fixture(self.tournament_id)
@@ -1204,6 +1349,7 @@ class TournamentManagementPage(tk.Frame):
                 if ok:
                     messagebox.showinfo("Éxito", msg)
                     self.refresh_tournament_data()
+                    self._view_matches()  # Mostrar el pop-up del fixture automáticamente
                 else:
                     messagebox.showerror("Error", msg)
                     
@@ -1229,43 +1375,247 @@ class TournamentManagementPage(tk.Frame):
             matches_window.title("Fixture del Torneo")
             matches_window.geometry("600x400")
             matches_window.configure(bg=COLORS['bg_primary'])
-            
-            # Tabla de partidos
             columns = ('Partido', 'Equipo 1', 'Equipo 2', 'Estado')
-            matches_tree = ttk.Treeview(matches_window, columns=columns, show='headings',
-                                       style='Modern.Treeview')
-            
+            matches_tree = ttk.Treeview(matches_window, columns=columns, show='headings', style='Modern.Treeview')
             for col in columns:
                 matches_tree.heading(col, text=col)
                 matches_tree.column(col, width=140, anchor='center')
-            
             for match in matches:
                 match_id, match_num, team1, team2, score1, score2, status = match
                 status_text = "Pendiente" if status == 'pendiente' else f"{score1}-{score2}"
                 matches_tree.insert('', 'end', values=(f"Partido {match_num}", team1, team2, status_text))
-            
             matches_tree.pack(fill='both', expand=True, padx=20, pady=20)
-            
         except Exception as e:
             messagebox.showerror("Error", f"Error al cargar partidos: {str(e)}")
 
+    def _delete_team(self):
+        """Eliminar un equipo seleccionado del torneo."""
+        if not self.tournament_id:
+            messagebox.showerror("Error", "No hay torneo activo")
+            return
+        
+        # Obtener equipo seleccionado
+        selection = self.teams_tree.selection()
+        if not selection:
+            messagebox.showwarning("Advertencia", "Seleccione un equipo para eliminar")
+            return
+        
+        item = self.teams_tree.item(selection[0])
+        values = item['values']
+        
+        team_id = values[0]
+        team_name = values[1]
+        player1 = values[2]
+        player2 = values[3]
+        username = values[4]
+        
+        # Confirmar eliminación
+        if messagebox.askyesno("Confirmar Eliminación", 
+                              f"¿Está seguro de eliminar el equipo '{team_name}'?\n"
+                              f"Jugadores: {player1} y {player2}\n"
+                              f"Usuario: {username}\n\n"
+                              f"Esta acción no se puede deshacer."):
+            try:
+                tm = TournamentManager()
+                ok, msg = tm.delete_team(team_id, self.tournament_id)
+                tm.desconectar()
+                
+                if ok:
+                    messagebox.showinfo("Éxito", msg)
+                    self.refresh_tournament_data()  # Actualizar la tabla
+                else:
+                    messagebox.showerror("Error", msg)
+                    
+            except Exception as e:
+                messagebox.showerror("Error", f"Error al eliminar equipo: {str(e)}")
+
     def _delete_tournament(self):
-        if not hasattr(self, 'tournament_id') or not self.tournament_id:
-            messagebox.showerror("Error", "No hay torneo activo para eliminar")
+        """Eliminar el torneo seleccionado en el dropdown."""
+        selected_tournament = self.tournament_var.get()
+        
+        if not selected_tournament:
+            messagebox.showerror("Error", "Seleccione un torneo para eliminar")
             return
-        if not messagebox.askyesno("Confirmar", "¿Está seguro de eliminar el torneo actual? Esta acción no se puede deshacer."):
+        
+        # Obtener el ID del torneo seleccionado
+        tournament_id = self.tournament_ids.get(selected_tournament)
+        if not tournament_id:
+            messagebox.showerror("Error", "Torneo no encontrado")
             return
+        
+        # Confirmar eliminación
+        if not messagebox.askyesno("Confirmar", f"¿Está seguro de eliminar el torneo '{selected_tournament}'?\nEsta acción no se puede deshacer."):
+            return
+        
         try:
             tm = TournamentManager()
-            ok, msg = tm.delete_tournament(self.tournament_id)
+            ok, msg = tm.delete_tournament(tournament_id)
             tm.desconectar()
+            
             if ok:
                 messagebox.showinfo("Éxito", "Torneo eliminado correctamente")
-                self.refresh_tournament_data()
+                self.refresh_tournament_data()  # Actualizar tanto la tabla como el dropdown
             else:
                 messagebox.showerror("Error", msg)
+                
         except Exception as e:
             messagebox.showerror("Error", f"Error al eliminar torneo: {str(e)}")
+
+    def _logout(self):
+        self.controller.current_user_id = None
+        self.controller.current_role = None
+        self.controller.current_username = None
+        self.controller.show_page('LoginPage')
+
+class TournamentViewPage(tk.Frame):
+    def __init__(self, parent, controller):
+        super().__init__(parent, bg=COLORS['bg_primary'])
+        self.controller = controller
+        self.create_widgets()
+
+    def create_widgets(self):
+        header_frame = ttk.Frame(self, style='Modern.TFrame')
+        header_frame.pack(fill='x', pady=(20, 0))
+        
+        ttk.Button(header_frame, text="Cerrar sesión", style='Secondary.TButton',
+                  command=self._logout).pack(side='right')
+        
+        title_frame = ttk.Frame(self, style='Modern.TFrame')
+        title_frame.pack(pady=(20, 30))
+        
+        ttk.Label(title_frame, text="🏆 VER TORNEO", 
+                 style='Title.TLabel').pack()
+        
+        # Tabla de torneos
+        tournaments_frame = ttk.Frame(self, style='Card.TFrame')
+        tournaments_frame.pack(pady=20, padx=40, fill='both', expand=True)
+        
+        ttk.Label(tournaments_frame, text="Torneos Disponibles", 
+                 style='Card.TLabel', font=('Segoe UI', 14, 'bold')).pack(pady=(20, 10))
+        
+        # Treeview para torneos
+        columns = ('ID', 'Nombre', 'Fecha', 'Estado', 'Equipos', 'Máximo')
+        self.tournaments_tree = ttk.Treeview(tournaments_frame, columns=columns, show='headings',
+                                            style='Modern.Treeview', height=8)
+        
+        for col in columns:
+            self.tournaments_tree.heading(col, text=col)
+            if col == 'ID':
+                self.tournaments_tree.column(col, width=50, anchor='center')
+            elif col == 'Nombre':
+                self.tournaments_tree.column(col, width=200, anchor='center')
+            elif col == 'Fecha':
+                self.tournaments_tree.column(col, width=100, anchor='center')
+            elif col == 'Estado':
+                self.tournaments_tree.column(col, width=100, anchor='center')
+            elif col == 'Equipos':
+                self.tournaments_tree.column(col, width=80, anchor='center')
+            elif col == 'Máximo':
+                self.tournaments_tree.column(col, width=80, anchor='center')
+        
+        tournaments_scrollbar = ttk.Scrollbar(tournaments_frame, orient='vertical', command=self.tournaments_tree.yview)
+        self.tournaments_tree.configure(yscrollcommand=tournaments_scrollbar.set)
+        
+        self.tournaments_tree.pack(side='left', fill='both', expand=True, padx=(20, 0), pady=(0, 20))
+        tournaments_scrollbar.pack(side='right', fill='y', padx=(0, 20), pady=(0, 20))
+        
+        # Botones
+        btn_frame = ttk.Frame(self, style='Modern.TFrame')
+        btn_frame.pack(pady=20)
+        
+        refresh_btn = ttk.Button(btn_frame, text="Actualizar", 
+                                style='Modern.TButton', command=self.refresh_tournaments)
+        refresh_btn.pack(side='left', padx=(0, 10), ipady=8, ipadx=20)
+        
+        fixture_btn = ttk.Button(btn_frame, text="Ver Fixture", style='Modern.TButton', command=self._view_fixture)
+        fixture_btn.pack(side='left', padx=(0, 10), ipady=8, ipadx=20)
+        
+        back_btn = ttk.Button(btn_frame, text="Volver", style='Secondary.TButton',
+                             command=self._go_back)
+        back_btn.pack(side='left', ipady=8, ipadx=20)
+        
+        # Cargar torneos al inicializar
+        self.refresh_tournaments()
+
+    def refresh_tournaments(self):
+        """Actualizar la lista de torneos."""
+        try:
+            # Limpiar tabla
+            for item in self.tournaments_tree.get_children():
+                self.tournaments_tree.delete(item)
+            
+            tm = TournamentManager()
+            tournaments = tm.get_all_tournaments()
+            
+            for tournament in tournaments:
+                tournament_id, name, date, status, max_teams = tournament
+                
+                # Contar equipos inscritos
+                teams = tm.get_tournament_teams(tournament_id)
+                current_teams = len(teams)
+                
+                # Formatear fecha
+                if isinstance(date, str):
+                    date_obj = datetime.strptime(date, "%Y-%m-%d")
+                else:
+                    date_obj = date
+                formatted_date = date_obj.strftime("%d/%m/%Y")
+                
+                # Formatear estado
+                status_text = {
+                    'abierto': 'Abierto',
+                    'en_curso': 'En Curso',
+                    'finalizado': 'Finalizado'
+                }.get(status, status)
+                
+                self.tournaments_tree.insert('', 'end', values=(
+                    tournament_id, name, formatted_date, status_text, 
+                    f"{current_teams}/{max_teams}", max_teams
+                ))
+            
+            tm.desconectar()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al cargar torneos: {str(e)}")
+
+    def _view_fixture(self):
+        selected = self.tournaments_tree.selection()
+        if not selected:
+            messagebox.showwarning("Advertencia", "Seleccione un torneo para ver el fixture")
+            return
+        item = self.tournaments_tree.item(selected[0])
+        tournament_id = item['values'][0]
+        try:
+            tm = TournamentManager()
+            matches = tm.get_tournament_matches(tournament_id)
+            tm.desconectar()
+            if not matches:
+                messagebox.showinfo("Info", "No hay partidos generados aún para este torneo")
+                return
+            # Crear ventana para mostrar partidos
+            matches_window = tk.Toplevel(self)
+            matches_window.title("Fixture del Torneo")
+            matches_window.geometry("600x400")
+            matches_window.configure(bg=COLORS['bg_primary'])
+            columns = ('Partido', 'Equipo 1', 'Equipo 2', 'Estado')
+            matches_tree = ttk.Treeview(matches_window, columns=columns, show='headings', style='Modern.Treeview')
+            for col in columns:
+                matches_tree.heading(col, text=col)
+                matches_tree.column(col, width=140, anchor='center')
+            for match in matches:
+                match_id, match_num, team1, team2, score1, score2, status = match
+                status_text = "Pendiente" if status == 'pendiente' else f"{score1}-{score2}"
+                matches_tree.insert('', 'end', values=(f"Partido {match_num}", team1, team2, status_text))
+            matches_tree.pack(fill='both', expand=True, padx=20, pady=20)
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al cargar partidos: {str(e)}")
+
+    def _go_back(self):
+        """Volver al menú correspondiente según el rol del usuario."""
+        if self.controller.current_role == 'admin':
+            self.controller.show_page('AdminMenuPage')
+        else:
+            self.controller.show_page('PlayerMenuPage')
 
     def _logout(self):
         self.controller.current_user_id = None
