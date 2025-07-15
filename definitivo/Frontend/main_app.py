@@ -1673,7 +1673,6 @@ class AdminUsersPage(tk.Frame):
         try:
             from padel_backend import UserManager  # type: ignore
             um = UserManager()
-            um.disconnect()
             um.cursor.execute("DELETE FROM usuarios WHERE usuario = %s", (usuario,))
             um.db.commit()
             um.disconnect()
