@@ -25,7 +25,7 @@ except ImportError:
 
 # Importar el backend
 try:
-    from padel_backend import UsuarioManager, ReservationManager, TournamentManager  # type: ignore
+    from padel_backend import UserManager, ReservationManager, TournamentManager  # type: ignore
     print("✓ Backend importado correctamente")
 except ImportError as e:
     print(f"Error: No se pudo importar el backend: {e}")
@@ -150,9 +150,9 @@ class AuthService:
     @staticmethod
     def login(username, password):
         try:
-            um = UsuarioManager()
-            role, uid = um.iniciar_sesion(username, password)
-            um.desconectar()
+            um = UserManager()
+            role, uid = um.login(username, password)
+            um.disconnect()
             return (True, role, uid) if role else (False, None, None)
         except Exception as e:
             print(f"Error en login: {e}")
@@ -161,9 +161,9 @@ class AuthService:
     @staticmethod
     def register(username, password, role):
         try:
-            um = UsuarioManager()
-            ok = um.crear_usuario(username, password, role)
-            um.desconectar()
+            um = UserManager()
+            ok = um.create_user(username, password, role)
+            um.disconnect()
             return ok
         except Exception as e:
             print(f"Error en registro: {e}")
@@ -620,7 +620,7 @@ class ReservationPage(tk.Frame):
         try:
             rm = ReservationManager()
             slots = rm.get_available_slots(fecha)
-            rm.desconectar()
+            rm.disconnect()
             self.cb_time['values'] = slots
             self.time_var.set('')
             
@@ -642,8 +642,8 @@ class ReservationPage(tk.Frame):
         
         try:
             rm = ReservationManager()
-            ok, msg = rm.reservar(uid, fecha, hora)
-            rm.desconectar()
+            ok, msg = rm.book(uid, fecha, hora)
+            rm.disconnect()
             
             if ok:
                 messagebox.showinfo("Reserva", msg)
@@ -734,7 +734,7 @@ class ViewReservationsPage(tk.Frame):
             is_admin = self.controller.current_role == 'admin'
             user_id = self.controller.current_user_id
             reservations = rm.get_reservations_with_ids(user_id, is_admin)
-            rm.desconectar()
+            rm.disconnect()
             for res_id, dia, hora, cancha, usuario in reservations:
                 if is_admin:
                     item_id = self.tree.insert('', 'end', values=(res_id, dia, hora, cancha, usuario))
@@ -777,7 +777,7 @@ class ViewReservationsPage(tk.Frame):
                 user_id = self.controller.current_user_id
                 
                 ok, msg = rm.delete_reservation(res_id, user_id, is_admin)
-                rm.desconectar()
+                rm.disconnect()
                 
                 if ok:
                     messagebox.showinfo("Éxito", msg)
@@ -882,7 +882,7 @@ class TournamentPage(tk.Frame):
         try:
             tm = TournamentManager()
             saturdays = tm.get_available_saturdays()
-            tm.desconectar()
+            tm.disconnect()
             
             # Formatear fechas para mostrar en dd/mm/aaaa
             formatted_dates = []
@@ -947,7 +947,7 @@ class TournamentPage(tk.Frame):
         try:
             tm = TournamentManager()
             ok, result = tm.create_tournament(name, date_db, int(max_teams))
-            tm.desconectar()
+            tm.disconnect()
             if ok:
                 messagebox.showinfo("Éxito", f"Torneo '{name}' creado exitosamente!\nID del torneo: {result}")
                 self.name_var.set('')
@@ -973,88 +973,75 @@ class TournamentRegistrationPage(tk.Frame):
     def create_widgets(self):
         header_frame = ttk.Frame(self, style='Modern.TFrame')
         header_frame.pack(fill='x', pady=(20, 0))
-        
-        ttk.Button(header_frame, text="Cerrar sesión", style='Secondary.TButton',
-                  command=self._logout).pack(side='right')
-        
+        ttk.Button(header_frame, text="Cerrar sesión", style='Secondary.TButton', command=self._logout).pack(side='right')
         title_frame = ttk.Frame(self, style='Modern.TFrame')
         title_frame.pack(pady=(20, 30))
-        
-        ttk.Label(title_frame, text="🏆 INSCRIPCIÓN A TORNEO", 
-                 style='Title.TLabel').pack()
-        
+        ttk.Label(title_frame, text="🏆 INSCRIPCIÓN A TORNEO", style='Title.TLabel').pack()
+
+        # --- INICIO SCROLLABLE ---
+        scroll_canvas = tk.Canvas(self, bg=COLORS['bg_primary'], highlightthickness=0)
+        scroll_canvas.pack(side='left', fill='both', expand=True)
+        scrollbar = ttk.Scrollbar(self, orient='vertical', command=scroll_canvas.yview)
+        scrollbar.pack(side='right', fill='y')
+        scroll_canvas.configure(yscrollcommand=scrollbar.set)
+        # Frame centrado dentro del canvas
+        scrollable_frame = ttk.Frame(scroll_canvas, style='Modern.TFrame')
+        window_id = scroll_canvas.create_window((0, 0), window=scrollable_frame, anchor='center')
+        def _center_content(event):
+            scroll_canvas.configure(scrollregion=scroll_canvas.bbox('all'))
+            canvas_width = scroll_canvas.winfo_width()
+            frame_width = scrollable_frame.winfo_reqwidth()
+            x = max((canvas_width - frame_width) // 2, 0)
+            scroll_canvas.coords(window_id, x, 0)
+        scrollable_frame.bind('<Configure>', _center_content)
+        scroll_canvas.bind('<Configure>', _center_content)
+        # --- FIN SCROLLABLE ---
+
         # Info del torneo
-        self.info_frame = ttk.Frame(self, style='Card.TFrame')
+        self.info_frame = ttk.Frame(scrollable_frame, style='Card.TFrame')
         self.info_frame.pack(pady=(0, 20), padx=40, fill='x')
-        
         self.info_content = ttk.Frame(self.info_frame, style='Card.TFrame')
         self.info_content.pack(padx=20, fill='x')
-        
-        # Dropdown de torneos
         ttk.Label(self.info_content, text="Seleccionar Torneo:", style='Card.TLabel').pack(anchor='w', pady=(0, 5))
         self.tournament_var = tk.StringVar()
         self.tournament_dropdown = ttk.Combobox(self.info_content, textvariable=self.tournament_var, state='readonly', style='Modern.TCombobox')
         self.tournament_dropdown.pack(fill='x', pady=(0, 10), ipady=8)
         self.tournament_dropdown.bind('<<ComboboxSelected>>', lambda e: self.refresh_tournament_info())
-        
-        self.tournament_info_label = ttk.Label(self.info_content, text="Cargando información del torneo...", 
-                                              style='Card.TLabel', font=('Segoe UI', 12))
+        self.tournament_info_label = ttk.Label(self.info_content, text="Cargando información del torneo...", style='Card.TLabel', font=('Segoe UI', 12))
         self.tournament_info_label.pack()
-        
+
         # Formulario de inscripción
-        form_frame = ttk.Frame(self, style='Card.TFrame')
+        form_frame = ttk.Frame(scrollable_frame, style='Card.TFrame')
         form_frame.pack(pady=20, padx=40, fill='both', expand=True)
-        
         content_frame = ttk.Frame(form_frame, style='Card.TFrame')
         content_frame.pack(padx=40, pady=40, fill='both', expand=True)
-        
-        # Nombre del equipo
-        ttk.Label(content_frame, text="Nombre del Equipo", 
-                 style='Card.TLabel').pack(anchor='w', pady=(0, 5))
+        ttk.Label(content_frame, text="Nombre del Equipo", style='Card.TLabel').pack(anchor='w', pady=(0, 5))
         self.team_name_var = tk.StringVar()
-        team_entry = ttk.Entry(content_frame, textvariable=self.team_name_var, 
-                              style='Modern.TEntry')
+        team_entry = ttk.Entry(content_frame, textvariable=self.team_name_var, style='Modern.TEntry')
         team_entry.pack(fill='x', pady=(0, 20), ipady=8)
-        
-        # Jugador 1
-        ttk.Label(content_frame, text="Jugador 1", 
-                 style='Card.TLabel').pack(anchor='w', pady=(0, 5))
+        ttk.Label(content_frame, text="Jugador 1", style='Card.TLabel').pack(anchor='w', pady=(0, 5))
         self.player1_var = tk.StringVar()
-        player1_entry = ttk.Entry(content_frame, textvariable=self.player1_var, 
-                                 style='Modern.TEntry')
+        player1_entry = ttk.Entry(content_frame, textvariable=self.player1_var, style='Modern.TEntry')
         player1_entry.pack(fill='x', pady=(0, 20), ipady=8)
-        
-        # Jugador 2
-        ttk.Label(content_frame, text="Jugador 2", 
-                 style='Card.TLabel').pack(anchor='w', pady=(0, 5))
+        ttk.Label(content_frame, text="Jugador 2", style='Card.TLabel').pack(anchor='w', pady=(0, 5))
         self.player2_var = tk.StringVar()
-        player2_entry = ttk.Entry(content_frame, textvariable=self.player2_var, 
-                                 style='Modern.TEntry')
+        player2_entry = ttk.Entry(content_frame, textvariable=self.player2_var, style='Modern.TEntry')
         player2_entry.pack(fill='x', pady=(0, 20), ipady=8)
-        
-        # Mensaje de estado
         self.msg_label = ttk.Label(content_frame, text="", style='Card.TLabel')
         self.msg_label.pack(pady=(0, 20))
-        
-        # Botones
         btn_frame = ttk.Frame(content_frame, style='Card.TFrame')
         btn_frame.pack(fill='x', pady=(20, 0))
-        
-        self.register_btn = ttk.Button(btn_frame, text="Inscribir Equipo", 
-                                      style='Success.TButton', command=self._register_team)
+        self.register_btn = ttk.Button(btn_frame, text="Inscribir Equipo", style='Success.TButton', command=self._register_team)
         self.register_btn.pack(fill='x', pady=(0, 10), ipady=8)
-        
-        back_btn = ttk.Button(btn_frame, text="Volver al Menú", style='Secondary.TButton',
-                             command=lambda: self.controller.show_page('PlayerMenuPage'))
+        back_btn = ttk.Button(btn_frame, text="Volver al Menú", style='Secondary.TButton', command=lambda: self.controller.show_page('PlayerMenuPage'))
         back_btn.pack(fill='x', ipady=8)
-        
         self._load_tournaments_dropdown()
 
     def _load_tournaments_dropdown(self):
         try:
             tm = TournamentManager()
             tournaments = tm.get_open_tournaments()
-            tm.desconectar()
+            tm.disconnect()
             self.tournaments_list = tournaments
             if tournaments:
                 display_list = [f"{nombre} - {datetime.strptime(str(fecha), '%Y-%m-%d').strftime('%d/%m/%Y')} (ID: {tid})" for tid, nombre, fecha, max_equipos in tournaments]
@@ -1107,7 +1094,7 @@ class TournamentRegistrationPage(tk.Frame):
             else:
                 self.msg_label.config(text=f"✅ Quedan {max_teams - current_teams} cupos disponibles")
                 self.register_btn.config(state='normal')
-            tm.desconectar()
+            tm.disconnect()
         except Exception as e:
             self.tournament_info_label.config(text=f"Error al cargar torneo: {str(e)}")
             self.register_btn.config(state='disabled')
@@ -1145,7 +1132,7 @@ class TournamentRegistrationPage(tk.Frame):
             tm = TournamentManager()
             ok, msg = tm.register_team(self.tournament_id, team_name, player1, player2, 
                                      self.controller.current_user_id)
-            tm.desconectar()
+            tm.disconnect()
             if ok:
                 messagebox.showinfo("Éxito", msg)
                 self.team_name_var.set('')
@@ -1296,7 +1283,7 @@ class TournamentManagementPage(tk.Frame):
                 self.generate_btn.config(state='normal')
             else:
                 self.generate_btn.config(state='disabled')
-            tm.desconectar()
+            tm.disconnect()
         except Exception as e:
             self.tournament_info_label.config(text=f"Error: {str(e)}")
 
@@ -1333,7 +1320,7 @@ class TournamentManagementPage(tk.Frame):
                 for item in self.teams_tree.get_children():
                     self.teams_tree.delete(item)
                 self.generate_btn.config(state='disabled')
-            tm.desconectar()
+            tm.disconnect()
         except Exception as e:
             self.tournament_info_label.config(text=f"Error: {str(e)}")
 
@@ -1346,7 +1333,7 @@ class TournamentManagementPage(tk.Frame):
             try:
                 tm = TournamentManager()
                 ok, msg = tm.generate_fixture(self.tournament_id)
-                tm.desconectar()
+                tm.disconnect()
                 
                 if ok:
                     messagebox.showinfo("Éxito", msg)
@@ -1366,7 +1353,7 @@ class TournamentManagementPage(tk.Frame):
         try:
             tm = TournamentManager()
             matches = tm.get_tournament_matches(self.tournament_id)
-            tm.desconectar()
+            tm.disconnect()
             
             if not matches:
                 messagebox.showinfo("Info", "No hay partidos generados aún")
@@ -1420,7 +1407,7 @@ class TournamentManagementPage(tk.Frame):
             try:
                 tm = TournamentManager()
                 ok, msg = tm.delete_team(team_id, self.tournament_id)
-                tm.desconectar()
+                tm.disconnect()
                 
                 if ok:
                     messagebox.showinfo("Éxito", msg)
@@ -1452,7 +1439,7 @@ class TournamentManagementPage(tk.Frame):
         try:
             tm = TournamentManager()
             ok, msg = tm.delete_tournament(tournament_id)
-            tm.desconectar()
+            tm.disconnect()
             
             if ok:
                 messagebox.showinfo("Éxito", "Torneo eliminado correctamente")
@@ -1525,8 +1512,8 @@ class TournamentViewPage(tk.Frame):
         btn_frame = ttk.Frame(self, style='Modern.TFrame')
         btn_frame.pack(pady=20)
         
-        refresh_btn = ttk.Button(btn_frame, text="Actualizar", 
-                                style='Modern.TButton', command=self.refresh_tournaments)
+        # Botón para actualizar torneos/equipos
+        refresh_btn = ttk.Button(btn_frame, text="Actualizar", style='Modern.TButton', command=self.refresh_tournaments)
         refresh_btn.pack(side='left', padx=(0, 10), ipady=8, ipadx=20)
         
         fixture_btn = ttk.Button(btn_frame, text="Ver Fixture", style='Modern.TButton', command=self._view_fixture)
@@ -1575,7 +1562,7 @@ class TournamentViewPage(tk.Frame):
                     f"{current_teams}/{max_teams}", max_teams
                 ))
             
-            tm.desconectar()
+            tm.disconnect()
             
         except Exception as e:
             messagebox.showerror("Error", f"Error al cargar torneos: {str(e)}")
@@ -1590,7 +1577,7 @@ class TournamentViewPage(tk.Frame):
         try:
             tm = TournamentManager()
             matches = tm.get_tournament_matches(tournament_id)
-            tm.desconectar()
+            tm.disconnect()
             if not matches:
                 messagebox.showinfo("Info", "No hay partidos generados aún para este torneo")
                 return
@@ -1653,6 +1640,9 @@ class AdminUsersPage(tk.Frame):
         btn_frame.pack(pady=20)
         delete_btn = ttk.Button(btn_frame, text="Eliminar Usuario", style='Danger.TButton', command=self._delete_user)
         delete_btn.pack(side='left', padx=(0, 10), ipady=8, ipadx=20)
+        # Botón para actualizar usuarios
+        refresh_btn = ttk.Button(btn_frame, text="Actualizar", style='Modern.TButton', command=self.refresh_users)
+        refresh_btn.pack(side='left', padx=(0, 10), ipady=8, ipadx=20)
         back_btn = ttk.Button(btn_frame, text="Volver", style='Secondary.TButton', command=lambda: self.controller.show_page('AdminMenuPage'))
         back_btn.pack(side='left', ipady=8, ipadx=20)
         self.refresh_users()
@@ -1661,11 +1651,11 @@ class AdminUsersPage(tk.Frame):
         for item in self.tree.get_children():
             self.tree.delete(item)
         try:
-            from padel_backend import UsuarioManager  # type: ignore
-            um = UsuarioManager()
+            from padel_backend import UserManager  # type: ignore
+            um = UserManager()
             um.cursor.execute("SELECT usuario, tipo FROM usuarios")
             users = um.cursor.fetchall()
-            um.desconectar()
+            um.disconnect()
             for usuario, tipo in users:
                 self.tree.insert('', 'end', values=(usuario, tipo))
         except Exception as e:
@@ -1681,11 +1671,12 @@ class AdminUsersPage(tk.Frame):
         if not messagebox.askyesno("Confirmar", f"¿Está seguro de eliminar el usuario '{usuario}'?"):
             return
         try:
-            from padel_backend import UsuarioManager  # type: ignore
-            um = UsuarioManager()
+            from padel_backend import UserManager  # type: ignore
+            um = UserManager()
+            um.disconnect()
             um.cursor.execute("DELETE FROM usuarios WHERE usuario = %s", (usuario,))
             um.db.commit()
-            um.desconectar()
+            um.disconnect()
             self.refresh_users()
             messagebox.showinfo("Éxito", f"Usuario '{usuario}' eliminado correctamente")
         except Exception as e:

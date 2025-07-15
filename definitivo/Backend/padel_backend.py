@@ -16,7 +16,7 @@ DB_CONFIG = {
     'database': 'padelclub'
 }
 
-class UsuarioManager:
+class UserManager:
     def __init__(self):
         self.db = pymysql.connect(**DB_CONFIG)
         self.cursor = self.db.cursor()
@@ -24,38 +24,38 @@ class UsuarioManager:
     def hash_password(self, plain_text):
         return hashlib.sha256(plain_text.encode('utf-8')).hexdigest()
 
-    def crear_usuario(self, nombre_usuario, clave, rol):
+    def create_user(self, username, password, role):
         # Validaciones básicas
-        if not nombre_usuario or not nombre_usuario.strip():
+        if not username or not username.strip():
             return False
         
-        if not clave or len(clave) < 6:
+        if not password or len(password) < 6:
             return False
         
-        if rol not in ['player', 'admin']:
+        if role not in ['player', 'admin']:
             return False
         
-        nombre_usuario = nombre_usuario.strip()
-        clave_segura = self.hash_password(clave)
+        username = username.strip()
+        secure_password = self.hash_password(password)
         sql = "INSERT INTO usuarios (usuario, contraseña, tipo) VALUES (%s, %s, %s)"
         try:
-            self.cursor.execute(sql, (nombre_usuario, clave_segura, rol))
+            self.cursor.execute(sql, (username, secure_password, role))
             self.db.commit()
             return True
         except Exception:
             self.db.rollback()
             return False
 
-    def iniciar_sesion(self, nombre_usuario, clave):
-        clave_segura = self.hash_password(clave)
-        consulta = "SELECT tipo, id FROM usuarios WHERE usuario = %s AND contraseña = %s"
-        self.cursor.execute(consulta, (nombre_usuario, clave_segura))
-        resultado = self.cursor.fetchone()
-        if resultado:
-            return resultado  # (rol, usuario_id)
+    def login(self, username, password):
+        secure_password = self.hash_password(password)
+        query = "SELECT tipo, id FROM usuarios WHERE usuario = %s AND contraseña = %s"
+        self.cursor.execute(query, (username, secure_password))
+        result = self.cursor.fetchone()
+        if result:
+            return result  # (rol, usuario_id)
         return None, None
 
-    def desconectar(self):
+    def disconnect(self):
         if self.db:
             self.db.close()
 
@@ -68,63 +68,63 @@ class ReservationManager:
         self.db = pymysql.connect(**DB_CONFIG)
         self.cursor = self.db.cursor()
 
-    def get_available_slots(self, fecha_str):
+    def get_available_slots(self, date_str):
         """Devuelve las franjas horarias con al menos una cancha libre."""
-        hoy = datetime.today().date()
-        fecha = datetime.strptime(fecha_str, self.DATE_FORMAT).date()
-        offset = (fecha - hoy).days
+        today = datetime.today().date()
+        date = datetime.strptime(date_str, self.DATE_FORMAT).date()
+        offset = (date - today).days
         if offset < 1 or offset > self.MAX_DAYS:
             return []
         
-        tabla = f"canchas_dia_{offset}"
+        table = f"canchas_dia_{offset}"
         query = (
             f"SELECT DISTINCT DATE_FORMAT(fecha_hora, '%H:%i:%s') AS hora "
-            f"FROM {tabla} WHERE disponible = 1 "
+            f"FROM {table} WHERE disponible = 1 "
             f"ORDER BY hora"
         )
         self.cursor.execute(query)
         return [r[0] for r in self.cursor.fetchall()]
 
-    def reservar(self, usuario_id: int, fecha_str: str, hora_str: str):
+    def book(self, user_id: int, date_str: str, hour_str: str):
         """Reserva la primera cancha libre (1–4) en la franja indicada."""
-        hoy = datetime.today().date()
-        fecha = datetime.strptime(fecha_str, self.DATE_FORMAT).date()
-        offset = (fecha - hoy).days
+        today = datetime.today().date()
+        date = datetime.strptime(date_str, self.DATE_FORMAT).date()
+        offset = (date - today).days
         if offset < 1 or offset > self.MAX_DAYS:
             return False, "Fecha fuera de rango"
         
-        tabla = f"canchas_dia_{offset}"
-        fecha_hora = f"{fecha_str} {hora_str}"
+        table = f"canchas_dia_{offset}"
+        date_hour = f"{date_str} {hour_str}"
 
         try:
             # 1) Seleccionar la primera cancha libre
             self.cursor.execute(
-                f"SELECT cancha_numero FROM {tabla} "
+                f"SELECT cancha_numero FROM {table} "
                 f"WHERE fecha_hora = %s AND disponible = 1 "
                 f"ORDER BY cancha_numero LIMIT 1",
-                (fecha_hora,)
+                (date_hour,)
             )
-            fila = self.cursor.fetchone()
-            if not fila:
+            row = self.cursor.fetchone()
+            if not row:
                 return False, "No hay canchas disponibles en ese horario"
-            cancha = fila[0]
+            court = row[0]
 
             # 2) Marcarla como ocupada
             self.cursor.execute(
-                f"UPDATE {tabla} SET disponible = 0 "
+                f"UPDATE {table} SET disponible = 0 "
                 f"WHERE fecha_hora = %s AND cancha_numero = %s",
-                (fecha_hora, cancha)
+                (date_hour, court)
             )
 
             # 3) Insertar la reserva
-            fin_dt = datetime.strptime(fecha_hora, "%Y-%m-%d %H:%M:%S") + timedelta(hours=1)
+            end_dt = datetime.strptime(date_hour, "%Y-%m-%d %H:%M:%S") + timedelta(hours=1)
             self.cursor.execute(
                 "INSERT INTO reservas (usuario_id, cancha, fecha_inicio, fecha_fin) VALUES (%s, %s, %s, %s)",
-                (usuario_id, cancha, fecha_hora, fin_dt.strftime("%Y-%m-%d %H:%M:%S"))
+                (user_id, court, date_hour, end_dt.strftime("%Y-%m-%d %H:%M:%S"))
             )
 
             self.db.commit()
-            return True, f"Reservada cancha {cancha} para {fecha_str} a las {hora_str}"
+            return True, f"Reservada cancha {court} para {date_str} a las {hour_str}"
 
         except Exception as e:
             self.db.rollback()
@@ -197,39 +197,39 @@ class ReservationManager:
             if not reservation:
                 return False, "Reserva no encontrada o no tiene permisos para eliminarla"
             
-            res_id, cancha, fecha_inicio, usuario = reservation
+            res_id, court, start_date, username = reservation
             
             # Verificar que la reserva es futura
-            if fecha_inicio < datetime.now():
+            if start_date < datetime.now():
                 return False, "No se pueden cancelar reservas pasadas"
             
             # Calcular qué tabla de canchas usar basado en la fecha
-            hoy = datetime.today().date()
-            fecha_reserva = fecha_inicio.date()
-            offset = (fecha_reserva - hoy).days
+            today = datetime.today().date()
+            reservation_date = start_date.date()
+            offset = (reservation_date - today).days
             
             if 1 <= offset <= 4:
-                tabla_cancha = f"canchas_dia_{offset}"
-                fecha_hora_str = fecha_inicio.strftime("%Y-%m-%d %H:%M:%S")
+                court_table = f"canchas_dia_{offset}"
+                date_hour_str = start_date.strftime("%Y-%m-%d %H:%M:%S")
                 
                 # Liberar la cancha
                 self.cursor.execute(
-                    f"UPDATE {tabla_cancha} SET disponible = 1 "
+                    f"UPDATE {court_table} SET disponible = 1 "
                     f"WHERE fecha_hora = %s AND cancha_numero = %s",
-                    (fecha_hora_str, cancha)
+                    (date_hour_str, court)
                 )
             
             # Eliminar la reserva
             self.cursor.execute("DELETE FROM reservas WHERE id = %s", (reservation_id,))
             
             self.db.commit()
-            return True, f"Reserva de {usuario} para el {fecha_reserva} cancelada exitosamente"
+            return True, f"Reserva de {username} para el {reservation_date} cancelada exitosamente"
             
         except Exception as e:
             self.db.rollback()
             return False, f"Error al cancelar reserva: {str(e)}"
         
-    def desconectar(self):
+    def disconnect(self):
         if self.db:
             self.db.close()
 
@@ -501,6 +501,6 @@ class TournamentManager:
         self.cursor.execute(sql)
         return self.cursor.fetchall()
     
-    def desconectar(self):
+    def disconnect(self):
         if self.db:
             self.db.close()
