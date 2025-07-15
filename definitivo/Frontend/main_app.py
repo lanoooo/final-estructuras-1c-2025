@@ -469,15 +469,6 @@ class RegisterPage(tk.Frame):
             # Iniciar sesión automáticamente después del registro
             ok, user_role, uid = AuthService.login(username, password)
             if ok:
-                if user_role == 'admin':
-                    code = simpledialog.askstring("Administrador", 
-                                                "Ingrese la clave maestra:", show='*')
-                    if code != ADMIN_SECRET:
-                        messagebox.showerror("Error", "Clave de administrador incorrecta")
-                        for var in self.vars.values():
-                            var.set('')
-                        self.controller.show_page('LoginPage')
-                        return
                 self.controller.current_role = user_role
                 self.controller.current_user_id = uid
                 self.controller.current_username = username
@@ -897,7 +888,13 @@ class TournamentPage(tk.Frame):
             formatted_dates = []
             for date_str in saturdays:
                 date_obj = datetime.strptime(date_str, "%Y-%m-%d")
-                formatted = date_obj.strftime("%d/%m/%Y (%A)")
+                # Mapear días de la semana a español
+                dias_semana = {
+                    0: 'Lunes', 1: 'Martes', 2: 'Miércoles', 3: 'Jueves',
+                    4: 'Viernes', 5: 'Sábado', 6: 'Domingo'
+                }
+                dia = dias_semana[date_obj.weekday()]
+                formatted = date_obj.strftime(f"%d/%m/%Y ({dia})")
                 formatted_dates.append(f"{formatted}")
             self.cb_date['values'] = formatted_dates
             self.msg_label.config(text=f"Fechas disponibles: próximos {len(saturdays)} sábados")
@@ -1155,6 +1152,11 @@ class TournamentRegistrationPage(tk.Frame):
                 self.player1_var.set('')
                 self.player2_var.set('')
                 self.refresh_tournament_info()
+                # Si estamos en la página de gestión de torneos, actualizar la vista de equipos
+                if hasattr(self.controller, 'pages') and 'TournamentManagementPage' in self.controller.pages:
+                    management_page = self.controller.pages['TournamentManagementPage']
+                    if hasattr(management_page, '_update_tournament_view'):
+                        management_page._update_tournament_view()
             else:
                 messagebox.showerror("Error", msg)
         except Exception as e:
@@ -1422,7 +1424,7 @@ class TournamentManagementPage(tk.Frame):
                 
                 if ok:
                     messagebox.showinfo("Éxito", msg)
-                    self.refresh_tournament_data()  # Actualizar la tabla
+                    self._update_tournament_view()  # Actualizar solo la vista del torneo actual
                 else:
                     messagebox.showerror("Error", msg)
                     
